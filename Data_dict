@@ -30,7 +30,7 @@ UCI (numeric): unclear
 Inter (numeric): unclear
 Slp (numeric): unclear
 control (numeric): unclear
-treat (binary): Binary treatment indicator is the PM2.5 high (greater than 10.59 mg/m3) vs. low (less than 10.59 mg/m3)
+treat (binary): unclear
 LocalTreat (character/numeric): unclear
 AAC (numeric): unclear
 RT (numeric): unclear
