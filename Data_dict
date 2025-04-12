@@ -1,0 +1,36 @@
+Data Dictionary
+
+FIPScode (numeric): County-level identifier
+County (character): US County
+State (character): US State
+LungCancer (numeric): Lung cancer mortality (age-adjusted to the 2000 US standard population, per 100,000, see https://seer.cancer.gov/seerstat/tutorials/aarates/definition.html)
+PM2.5 (numeric): Particulate matter under 2.5 µm in aerodynamic diameter (see EPA EQI report)
+StatusVariable (binary): binary treatment indicator is the PM2.5 high (greater than 10.59 mg/m3) vs. low (less than 10.59 mg/m3)
+LandEQI (numeric): Land quality index, lower=better (see EPA EQI report)
+SociodEQI (numeric): Socio-demographic quality index, lower=better (see EPA EQI report)
+BuiltEQI (numeric): Built environment quality index, lower=better (see EPA EQI report)
+LTD (numeric): unclear
+Intercept (numeric): unclear
+Slope (numeric): unclear
+CLU501 (numeric): unclear
+PM10 (numeric): Particulate matter under 10 µm in aerodynamic diameter (see EPA EQI report)
+SO2 (numeric): Sulfur dioxide (see EPA EQI report)
+NO2 (numeric): Nitrogen dioxide (see EPA EQI report)
+O3 (numeric): Ozone (see EPA EQI report)
+CO (numeric): Carbon Monoxide (see EPA EQI report)
+CN (numeric): unclear
+Disel (numeric): Diesel engine emissions (see EPA EQI report)
+CS2 (numeric): Carbon disulfide (see EPA EQI report)
+AirEQI (numeric): Air quality index, lower=better (see EPA EQI report)
+WaterEQI (numeric): Water quality index, lower=better (see EPA EQI report)
+EQI (numeric): Overal environmental quality index, lower=better (see EPA EQI report)
+Status (binary): unclear
+LCI (numeric): unclear
+UCI (numeric): unclear
+Inter (numeric): unclear
+Slp (numeric): unclear
+control (numeric): unclear
+treat (binary): Binary treatment indicator is the PM2.5 high (greater than 10.59 mg/m3) vs. low (less than 10.59 mg/m3)
+LocalTreat (character/numeric): unclear
+AAC (numeric): unclear
+RT (numeric): unclear

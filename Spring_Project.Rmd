@@ -1,0 +1,50 @@
+---
+title: "Spring 2025 Project"
+author: "Armelle Duston"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Setup
+```{r}
+packages <- c("ggplot2", "dplyr", "httr")
+
+if (any(packages %in% rownames(installed.packages()) == FALSE)) {
+  install.packages(packages[!installed_packages])
+}
+
+invisible(lapply(packages, library, character.only = TRUE))
+```
+
+# Data
+```{r}
+
+dataverse_server <- "https://dataverse.harvard.edu"
+file_id <- ":persistentId?persistentId=doi:10.7910/DVN/HMOEJO/D3GVNB" 
+api_key <- "8c1d730e-50a2-426d-a6ce-e65e8ba5318f"
+endpoint <- paste0(dataverse_server, "/api/access/datafile/", file_id)
+
+response <- GET(endpoint, add_headers("X-Dataverse-key" = api_key))
+
+if (status_code(response) == 200) {
+  
+  data_text <- content(response, as = "text", encoding = "UTF-8")
+  my_data <- read.delim(textConnection(data_text), 
+                        header = TRUE, 
+                        sep = "",
+                        stringsAsFactors = FALSE)
+  
+} else {
+  cat("Request failed with status code:", status_code(response), "\n")
+}
+
+
+
+```
+
+
+
