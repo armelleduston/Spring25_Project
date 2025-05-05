@@ -16,12 +16,7 @@ knitr::opts_chunk$set(echo = TRUE)
 # Setup
 ```{r}
 packages <- c("ggplot2", "dplyr", "httr", "tidycensus", 
-              "stringr", "spdep", "kableExtra")
-
-if (any(packages %in% rownames(installed.packages()) == FALSE)) {
-  install.packages(packages[!installed_packages])
-}
-
+              "stringr", "spdep", "kableExtra", "viridis", "RColorBrewer")
 invisible(lapply(packages, library, character.only = TRUE))
 
 # Install INLA separately since it's not on CRAN
@@ -265,7 +260,7 @@ Focus modeling on eastern states: they have areas with lower and higher incidenc
 
 # keep eastern states
 reduced_data <- my_data_sf |>
-  filter(State %in% c("VA, WV, KY", "TN", "NC", "SC", "GA", 
+  filter(State %in% c("VA", "WV", "KY", "TN", "NC", "SC", "GA", 
                       "FL", "AL", "MS", "LA", "MO", "AR",
                       "IA", "WI", "IL", "IN", "OH", "PA",
                       "MD", "DL", "DC", "NJ", "NY", "CT",
@@ -293,12 +288,14 @@ fit_spatial_model <- function(covariates){
   gamma_model <- inla(as.formula(formula), family = "gamma", 
                       data = reduced_data,
                       control.predictor = list(compute = TRUE),
-                      control.compute = list(return.marginals.predictor = TRUE))
+                      control.compute = list(return.marginals.predictor = TRUE, 
+                                             waic = TRUE))
   
   normal_model <- inla(as.formula(formula), family = "gaussian", 
                       data = reduced_data,
                       control.predictor = list(compute = TRUE),
-                      control.compute = list(return.marginals.predictor = TRUE))
+                      control.compute = list(return.marginals.predictor = TRUE, 
+                                             waic = TRUE))
 
 
   return(list(gamma_model, normal_model)) 
@@ -313,38 +310,51 @@ cov4 <- "AirEQI + LandEQI + SociodEQI + BuiltEQI"
 
 model1 <- fit_spatial_model(cov1)
 model2 <- fit_spatial_model(cov2)
-model3 <- fit_spatial_model(cov3)
-model4 <- fit_spatial_model(cov4)
+# model3 <- fit_spatial_model(cov3)
+# model4 <- fit_spatial_model(cov4)
   
 ```
-Check out residuals
+
+Check out residuals (look for residual spatial clustering)
 
 ```{r}
 
+east_states <- states |>
+  mutate(centroid = st_centroid(geometry)) |>
+  mutate(lon = st_coordinates(centroid)[,1]) |>
+  filter(lon > -94) |>
+  select(-centroid, -lon)
+
+
 plot_resid <- function(fit) {
-  res_df <- with(reduced_data, {
-    mu   <- fit$summary.fitted.values$mean
-    pear <- (LungCancer - mu) / sqrt(mu)
-    data.frame(mu, pear)
-  })
+  resid_df <- reduced_data |> select(geometry)
+  resid_df$mu   <- fit$summary.fitted.values$mean
+  resid_df$pear <- (reduced_data$LungCancer - resid_df$mu) / sqrt(resid_df$mu)
   
-  # 3. One‐liner ggplot
-  p <- ggplot(res_df, aes(mu, pear)) +
-    geom_point(alpha = .5) +
-    geom_hline(yintercept = 0, linetype = "dashed") +
-    labs(
-      x     = "Fitted value",
-      y     = "Pearson residual",
-      title = "Pearson residuals vs. fitted"
-    ) +
-    theme_minimal()
-  
-  return (p)
+  p1 <- ggplot(resid_df) +
+    geom_sf(aes(fill = pear), color = NA, size = 0) +
+    geom_sf(data = east_states, fill = NA, color = "black", size = 0.1) +
+    scale_fill_distiller(
+      palette  = "RdBu",
+      direction = -1,
+      limits   = c(-max(abs(resid_df$pear)), max(abs(resid_df$pear))),  
+      name     = "Pearson\nresidual") +
+    coord_sf(datum = NA) +
+    theme_minimal() +
+    labs(title = "Pearson Residuals") +
+    theme(
+      legend.position = "bottom",
+      plot.title = element_text(hjust = 0.5, size = 12, face = "bold"),
+      axis.text = element_blank(),
+      axis.ticks = element_blank(),
+      panel.grid = element_blank(),
+      panel.background = element_rect(fill = "white", color = NA)
+    )
+  return (p1)
 }
 
 plot_resid(model1[[1]])
 plot_resid(model2[[1]])
-
 plot_resid(model1[[2]])
 plot_resid(model2[[2]])
 
@@ -357,29 +367,46 @@ Results for models with PM2.5
 ```{r}
 
 ### extract summaries from models and adjust as below
+get_sum <- function(fit) {
+  summary <- fit$summary.fixed |>
+    rename(lower = `0.025quant`, upper = `0.975quant`)
+}
 
+model1[[1]]$waic$waic
 
-  # gamma_sum <- gamma_model$summary.fixed |>
-  #   rename(lower = `0.025quant`, upper = `0.975quant`)
-
-results_df1 <- data.frame(rbind(model1[[1]],
-                                model2[[1]],
-                                exp(model1[[2]]),
-                                exp(model2[[2]])
+results_df1 <- data.frame(rbind(exp(get_sum(model1[[1]])),
+                                exp(get_sum(model2[[1]])),
+                                get_sum(model1[[2]]),
+                                get_sum(model2[[2]])
                                 )
                           ) %>%
   filter(!grepl("Intercept", rownames(.))) |>
   mutate(mean_ci = sprintf(
-      "%.2f (%.2f, %.2f)",  
+      "%.2f (%.3f, %.3f)",  
       mean, lower, upper) ) |>
   select(mean_ci)
-  
-results_df1 <- cbind(results_df1[1:5,], results_df1[6:10,]) 
+
+get_waic <- function(fit) {
+  return ( as.character(round(fit$waic$waic), digits=0))
+}
+
+
+results_df1 <- cbind(results_df1[1:5,], 
+                     rbind(get_waic(model1[[1]]),
+                           get_waic(model2[[1]]),
+                           cbind(rep(NA, 3))),
+                     results_df1[6:10,],
+                     rbind(get_waic(model1[[2]]),
+                           get_waic(model2[[2]]),
+                           cbind(rep(NA, 3)))) 
+
+
 rownames(results_df1) <- c("PM2.5 (unadjusted)",
                            "PM2.5 (adjusted)",
                            "LandEQI",
                            "SociodEQI",
                            "BuiltEQI")
+colnames(results_df1) <- c("(multiplicative)", "WAIC-gam", "(additive)", "WAIC-gaus")
   
 results_df1 |> 
   kbl(caption = "Lung Cancer incidence models (PM2.5 primary covariate) ", 
@@ -387,14 +414,13 @@ results_df1 |>
     kable_styling(full_width = FALSE,
                   latex_options = c("hold_position", "striped")) |>
   add_header_above(c(" " = 1,
-                     "Gaussian model" = 1, 
-                     "Gamma model" = 1)) |>
+                     "Gamma model" = 2, 
+                     "Gaussian model" = 2)) |>
   group_rows("Unadjusted", 1, 1) |>
   group_rows("Adjusted", 2, 5) 
 
 
 ```
-
 
 
 
