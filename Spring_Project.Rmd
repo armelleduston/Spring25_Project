@@ -2,7 +2,11 @@
 title: "Spring 2025 Project"
 author: "Armelle Duston"
 date: "`r Sys.Date()`"
-output: pdf_document
+output: 
+  pdf_document:
+    extra_dependencies:
+      - bm
+      - amsmath
 ---
 
 ```{r setup, include=FALSE}
@@ -11,16 +15,36 @@ knitr::opts_chunk$set(echo = TRUE)
 
 # Setup
 ```{r}
-packages <- c("ggplot2", "dplyr", "httr")
+packages <- c("ggplot2", "dplyr", "httr", "tidycensus", 
+              "stringr", "spdep", "kableExtra")
 
 if (any(packages %in% rownames(installed.packages()) == FALSE)) {
   install.packages(packages[!installed_packages])
 }
 
 invisible(lapply(packages, library, character.only = TRUE))
+
+# Install INLA separately since it's not on CRAN
+if (!requireNamespace("BiocManager", quietly = TRUE)) {
+  install.packages("BiocManager")
+}
+if ("INLA" %in% rownames(installed.packages())==FALSE){
+  install.packages(
+  "INLA", 
+  repos = c(
+    INLA = "https://inla.r-inla-download.org/R/stable",
+    CRAN = "https://cloud.r-project.org"
+  ),
+  dependencies = TRUE
+)
+}
+library(INLA)
 ```
 
 # Data
+
+Use API to get main dataset from harvard dataverse 
+
 ```{r}
 
 dataverse_server <- "https://dataverse.harvard.edu"
@@ -42,9 +66,345 @@ if (status_code(response) == 200) {
   cat("Request failed with status code:", status_code(response), "\n")
 }
 
+```
+
+Get state and county shapefiles and population counts from tidycensus and join with main df
+
+```{r}
+
+
+# set Census API key 
+# census_api_key("491a326a4f51b9f77b828740ce4f0571f2951d8d", 
+#                install = TRUE, overwrite = FALSE)
+# readRenviron("~/.Renviron")
+
+# get county geometries + population for 2010
+counties_data <- get_acs(
+  geography = "county",
+  variables = "B01003_001",       # total population
+  year      = 2010,
+  geometry  = TRUE
+)
+counties <- counties_data |>
+  rename(population2010 = estimate) |>
+  select(GEOID, geometry, population2010)
+
+
+# join with main data
+my_data <- my_data |> 
+  mutate(GEOID = str_pad(
+      as.character(FIPScode),
+      width = 5,
+      side  = "left",
+      pad   = "0"
+    )) |>
+  left_join(counties, by = "GEOID")
+
+# get state shapefiles 
+states <- get_acs(geography = "state", 
+                  variables = "B01003_001", 
+                  year = 2010, 
+                  geometry = TRUE) |>
+    st_as_sf() |>
+    filter(!NAME %in% c("Alaska", "Hawaii", "Puerto Rico"))
+
+```
+
+
+# Modeling
+
+I considered two models for the lung cancer incidence per 100,000 (for the time period 2010-2014): normal and gamma. The incidence is positive and continuous, so a gamma model could be appropriate particularly if it is right-skewed. To model spatial variation, I used a Bayesian spatial model as follows (Besag-York-Mollié (BYM) model):
+
+$$
+
+\begin{aligned}
+  Y_i &\sim Gamma(\alpha, \frac{\mu_i}{\alpha})  \\
+  \log(\mu_i) &= z_i \beta + u_i + v_i \\ \\
+  
+  Y_i &\sim Normal(\mu_i, \sigma^2) \\
+  \mu_i &= z_i \beta + u_i + v_i \\ \\
+  
+  
+  z_i: &\text{ vector of covariates (fixed)} \\
+  u_i: &\text{ spatial random effect} \\
+  v_i: &\text{ uncorrelated noise} \\ \\
+  
+  u_i|u_{-i} &\sim Normal(\bar{u}_{\delta_i}, \frac{\sigma^2_u}{n_{\delta_i}}), (\delta_i \text{ is the set of neighbors}) \\
+  v_i &\sim Normal(0, \sigma_v^2)
+\end{aligned}
+$$
+
+In particular, I am interested in (1) What is the association between PM2.5 and rate of lung cancer mortality? and (2) Is AirEQI a better or worse predictor of lung cancer compared to PM2.5? The following covariates are considered for the models:
+- Primary interest
+    -PM2.5 or AirEQI
+- Possible confounders
+  - LandEQI
+  - SociodemographicEQI
+  - BuiltEQI
+
+
+
+# Exploratory analysis
+
+Plot distribution of important variables
+
+```{r}
+
+my_data |> ggplot(aes(x=LungCancer)) +
+  geom_histogram() +
+  theme_minimal()
+
+my_data |> ggplot(aes(x=PM2.5)) +
+  geom_histogram() +
+  theme_minimal()
+
+my_data |> ggplot(aes(x=AirEQI)) +
+  geom_histogram() +
+  theme_minimal()
+  
+  
+```
+
+
+Make some maps of all the variables of interest
+
+```{r}
+
+# Data for mapping - make sf obj and filter alaska and hawaii
+my_data_sf <- st_as_sf(my_data) |>
+  filter(!str_starts(GEOID, "02") & !str_starts(GEOID, "15"))
+
+# Function to generate maps
+create_map <- function(data, var_name, title, fill_color = "viridis") {
+  
+  # Handle NA values in the scale
+  scale_fill <- if(fill_color == "viridis") {
+    scale_fill_viridis_c(na.value = "grey80", 
+                         option = "plasma", 
+                         name = var_name)
+  } else {
+    scale_fill_distiller(na.value = "grey80", 
+                         palette = fill_color, 
+                         name = var_name, 
+                         direction = 1)
+  }
+  
+  ggplot() +
+    geom_sf(data = my_data_sf, 
+            aes(fill = .data[[var_name]], geometry = geometry), 
+            color = NA, size = 0) +
+    geom_sf(data = states, fill = NA, color = "black", size = 0.1) +
+    scale_fill +
+    coord_sf(datum = NA) +
+    theme_minimal() +
+    labs(title = title) +
+    theme(
+      legend.position = "bottom",
+      plot.title = element_text(hjust = 0.5, size = 12, face = "bold"),
+      axis.text = element_blank(),
+      axis.ticks = element_blank(),
+      panel.grid = element_blank(),
+      panel.background = element_rect(fill = "white", color = NA)
+    )
+}
+
+# Create maps for each variable
+pm25_map <- create_map(my_data_sf, 
+                       "PM2.5", 
+                       "PM2.5 Concentration by County")
+
+aireqi_map <- create_map(my_data_sf, 
+                         "AirEQI", 
+                         "Air Environmental Quality Index by County")
+
+landeqi_map <- create_map(my_data_sf, 
+                          "LandEQI", 
+                          "Land Environmental Quality Index by County")
+
+sociod_map <- create_map(my_data_sf, 
+                         "SociodEQI", 
+                         "Sociodemographic Environmental Quality Index by County")
+
+built_map <- create_map(my_data_sf, 
+                         "BuiltEQI", 
+                         "Built Environmental Quality Index by County")
+
+lung_cancer_map <- create_map(my_data_sf, 
+                              "LungCancer", 
+                              "Lung Cancer Rate by County", 
+                              "YlOrRd")
+
+# Display the maps
+pm25_map
+aireqi_map
+landeqi_map
+sociod_map
+built_map
+lung_cancer_map
+
+```
+
+Explore relationships between variables
+
+```{r}
+
+variables_of_interest <- c("PM2.5", "AirEQI", "LandEQI", "SociodEQI", "BuiltEQI", "LungCancer")
+cor_data <- my_data |> 
+  select(all_of(variables_of_interest)) |>
+  cor(use = "pairwise.complete.obs")
+corrplot::corrplot(cor_data, method = "circle", type = "upper", 
+                   tl.col = "black", tl.srt = 45)
+
+```
+
+# Building & fitting model
+
+Focus modeling on eastern states: they have areas with lower and higher incidence of lung cancer, lower missingness of data, and smaller counties (finer resolution). 
+
+```{r}
+
+# keep eastern states
+reduced_data <- my_data_sf |>
+  filter(State %in% c("VA, WV, KY", "TN", "NC", "SC", "GA", 
+                      "FL", "AL", "MS", "LA", "MO", "AR",
+                      "IA", "WI", "IL", "IN", "OH", "PA",
+                      "MD", "DL", "DC", "NJ", "NY", "CT",
+                      "RI", "MA", "VT", "NH", "ME"))
+  
+  
+# neighborhood matrix 
+neighbors <- poly2nb(reduced_data)
+nb2INLA("reduced_data.adj", neighbors)
+graph <- inla.read.graph(filename = "reduced_data.adj")
+
+reduced_data$re_u <- 1:nrow(reduced_data)
+reduced_data$re_v <- 1:nrow(reduced_data)
+
+fit_spatial_model <- function(covariates){
+  
+  formula <- paste("LungCancer ~ ",
+                   covariates, 
+                   "+ f(re_u, model = 'besag', graph = graph, scale.model = TRUE) +", 
+                   # spatial random component 
+                   "f(re_v, model = 'iid')" # unstructured random component
+                   )
+
+
+  gamma_model <- inla(as.formula(formula), family = "gamma", 
+                      data = reduced_data,
+                      control.predictor = list(compute = TRUE),
+                      control.compute = list(return.marginals.predictor = TRUE))
+  
+  normal_model <- inla(as.formula(formula), family = "gaussian", 
+                      data = reduced_data,
+                      control.predictor = list(compute = TRUE),
+                      control.compute = list(return.marginals.predictor = TRUE))
+
+
+  return(list(gamma_model, normal_model)) 
+  
+}
+
+cov1 <- "PM2.5"
+cov2 <- "PM2.5 + LandEQI + SociodEQI + BuiltEQI"
+cov3 <- "AirEQI"
+cov4 <- "AirEQI + LandEQI + SociodEQI + BuiltEQI"
+
+
+model1 <- fit_spatial_model(cov1)
+model2 <- fit_spatial_model(cov2)
+model3 <- fit_spatial_model(cov3)
+model4 <- fit_spatial_model(cov4)
+  
+```
+Check out residuals
+
+```{r}
+
+plot_resid <- function(fit) {
+  res_df <- with(reduced_data, {
+    mu   <- fit$summary.fitted.values$mean
+    pear <- (LungCancer - mu) / sqrt(mu)
+    data.frame(mu, pear)
+  })
+  
+  # 3. One‐liner ggplot
+  p <- ggplot(res_df, aes(mu, pear)) +
+    geom_point(alpha = .5) +
+    geom_hline(yintercept = 0, linetype = "dashed") +
+    labs(
+      x     = "Fitted value",
+      y     = "Pearson residual",
+      title = "Pearson residuals vs. fitted"
+    ) +
+    theme_minimal()
+  
+  return (p)
+}
+
+plot_resid(model1[[1]])
+plot_resid(model2[[1]])
+
+plot_resid(model1[[2]])
+plot_resid(model2[[2]])
 
 
 ```
+
+
+Results for models with PM2.5
+
+```{r}
+
+### extract summaries from models and adjust as below
+
+
+  # gamma_sum <- gamma_model$summary.fixed |>
+  #   rename(lower = `0.025quant`, upper = `0.975quant`)
+
+results_df1 <- data.frame(rbind(model1[[1]],
+                                model2[[1]],
+                                exp(model1[[2]]),
+                                exp(model2[[2]])
+                                )
+                          ) %>%
+  filter(!grepl("Intercept", rownames(.))) |>
+  mutate(mean_ci = sprintf(
+      "%.2f (%.2f, %.2f)",  
+      mean, lower, upper) ) |>
+  select(mean_ci)
+  
+results_df1 <- cbind(results_df1[1:5,], results_df1[6:10,]) 
+rownames(results_df1) <- c("PM2.5 (unadjusted)",
+                           "PM2.5 (adjusted)",
+                           "LandEQI",
+                           "SociodEQI",
+                           "BuiltEQI")
+  
+results_df1 |> 
+  kbl(caption = "Lung Cancer incidence models (PM2.5 primary covariate) ", 
+      booktabs = TRUE) |>
+    kable_styling(full_width = FALSE,
+                  latex_options = c("hold_position", "striped")) |>
+  add_header_above(c(" " = 1,
+                     "Gaussian model" = 1, 
+                     "Gamma model" = 1)) |>
+  group_rows("Unadjusted", 1, 1) |>
+  group_rows("Adjusted", 2, 5) 
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
 
 
 

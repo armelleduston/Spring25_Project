@@ -3,7 +3,7 @@ Data Dictionary
 FIPScode (numeric): County-level identifier
 County (character): US County
 State (character): US State
-LungCancer (numeric): Lung cancer mortality (age-adjusted to the 2000 US standard population, per 100,000, see https://seer.cancer.gov/seerstat/tutorials/aarates/definition.html)
+LungCancer (numeric): Lung cancer incidence rate (age-adjusted to the 2000 US standard population, per 100,000, see https://seer.cancer.gov/seerstat/tutorials/aarates/definition.html)
 PM2.5 (numeric): Particulate matter under 2.5 µm in aerodynamic diameter (see EPA EQI report)
 StatusVariable (binary): binary treatment indicator is the PM2.5 high (greater than 10.59 mg/m3) vs. low (less than 10.59 mg/m3)
 LandEQI (numeric): Land quality index, lower=better (see EPA EQI report)
